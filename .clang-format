@@ -1,0 +1,10 @@
+﻿---
+Cpp11BracedListStyle: 'true'
+IndentCaseLabels: 'true'
+IndentWidth: '4'
+PointerAlignment: Left
+SpacesBeforeTrailingComments: '1'
+TabWidth: '4'
+UseTab: Never
+
+...
