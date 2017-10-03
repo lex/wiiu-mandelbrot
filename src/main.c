@@ -1,11 +1,47 @@
 #include <coreinit/core.h>
 #include <coreinit/debug.h>
 #include <coreinit/foreground.h>
+#include <coreinit/systeminfo.h>
 #include <coreinit/thread.h>
 #include <proc_ui/procui.h>
+#include <stdint.h>
 #include <sysapp/launch.h>
 
+#include "draw.h"
+#include "memory.h"
+
+uint8_t logBuffer[0x400];
+bool initialized = false;
 bool isAppRunning = true;
+
+void initializeScreen() {
+    // Grab the buffer size for each screen (TV and gamepad)
+    const int sizeOfBuffer0 = OSScreenGetBufferSizeEx(0);
+    const int sizeOfBuffer1 = OSScreenGetBufferSizeEx(1);
+    __os_snprintf(logBuffer, 0x400, "Screen sizes %x, %x\n", sizeOfBuffer0,
+                  sizeOfBuffer1);
+    OSReport(logBuffer);
+
+    // Set the buffer area.
+    screenBuffer = MEM1_alloc(sizeOfBuffer0 + sizeOfBuffer1, 0x40);
+    __os_snprintf(logBuffer, 0x400, "Allocated screen buffers at %x\n",
+                  screenBuffer);
+    OSReport(logBuffer);
+
+    OSScreenSetBufferEx(0, screenBuffer);
+    OSScreenSetBufferEx(1, (screenBuffer + sizeOfBuffer0));
+    OSReport("Set screen buffers\n");
+
+    OSScreenEnableEx(0, 1);
+    OSScreenEnableEx(1, 1);
+
+    clearFramebuffers();
+}
+
+void deInitializeScreen() {
+    clearFramebuffers();
+    MEM1_free(screenBuffer);
+}
 
 static void SaveCallback() {
     OSSavesDone_ReadyToRelease(); // Required
@@ -14,61 +50,65 @@ static void SaveCallback() {
 static bool AppRunning() {
     if (!OSIsMainCore()) {
         ProcUISubProcessMessages(true);
-    } else {
-        ProcUIStatus status = ProcUIProcessMessages(true);
+        return isAppRunning;
+    }
 
-        if (status == PROCUI_STATUS_EXITING) {
+    ProcUIStatus status = ProcUIProcessMessages(true);
+
+    switch (status) {
+        case PROCUI_STATUS_EXITING:
             // Being closed, deinit, free, and prepare to exit
             isAppRunning = false;
+
+            if (initialized) {
+                initialized = false;
+                deInitializeScreen();
+                memoryRelease();
+            }
+
             ProcUIShutdown();
-        } else if (status == PROCUI_STATUS_RELEASE_FOREGROUND) {
+
+            break;
+
+        case PROCUI_STATUS_RELEASE_FOREGROUND:
             // Free up MEM1 to next foreground app, deinit screen, etc.
+            deInitializeScreen();
+            memoryRelease();
             ProcUIDrawDoneRelease();
-        } else if (status == PROCUI_STATUS_IN_FOREGROUND) {
+
+            break;
+
+        case PROCUI_STATUS_IN_FOREGROUND:
             // Executed while app is in foreground
-        }
+
+            if (!initialized) {
+                OSReport("Initializing screen...");
+                initialized = true;
+                memoryInitialize();
+                initializeScreen();
+                OSReport("Screen initialized.");
+            }
+
+            break;
     }
 
     return isAppRunning;
 }
 
-static int CoreEntryPoint(int argc, const char** argv) {
-    OSReport("Hello world from %s", argv[0]);
-    return argc;
-}
-
 int main(int argc, char** argv) {
+    OSEnableHomeButtonMenu(false);
+    OSScreenInit();
     ProcUIInit(&SaveCallback);
-    OSReport("Main thread running on core %d", OSGetCoreId());
-
-    // Run thread on core 0
-    OSThread* threadCore0 = OSGetDefaultThread(0);
-
-    const char* core0Args[] = {"Core 0"};
-
-    OSRunThread(threadCore0, CoreEntryPoint, 0, core0Args);
-
-    // Run thread on core 2
-    OSThread* threadCore2 = OSGetDefaultThread(2);
-
-    const char* core2Args[] = {"Core 2"};
-
-    OSRunThread(threadCore2, CoreEntryPoint, 2, core2Args);
-
-    // Wait for threads to return
-    int resultCore0 = -1, resultCore2 = -1;
-    OSJoinThread(threadCore0, &resultCore0);
-    OSJoinThread(threadCore2, &resultCore2);
-
-    OSReport("Core 0 thread returned %d", resultCore0);
-    OSReport("Core 2 thread returned %d", resultCore2);
-
-    // Sends messages for ProcUI to release foreground, exit
-    // and launch into the system menu immediately.
-    SYSLaunchMenu();
 
     while (AppRunning()) {
+        if (!initialized) {
+            continue;
+        }
+
+        drawString(0, 0, "hello world");
     }
+
+    SYSRelaunchTitle(0, NULL);
 
     return 0;
 }
