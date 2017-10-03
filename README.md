@@ -7,7 +7,7 @@ Needs [wut](https://github.com/decaf-emu/wut)
 ## Building
 
 ```
-cd mandelbrot-wiiu
+cd wiiu-mandelbrot
 mkdir build
 cd build
 cmake -DCMAKE_TOOLCHAIN_FILE=$WUT_ROOT/cmake/wut-toolchain.cmake ../

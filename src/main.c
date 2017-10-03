@@ -6,6 +6,7 @@
 #include <proc_ui/procui.h>
 #include <stdint.h>
 #include <sysapp/launch.h>
+#include <vpad/input.h>
 
 #include "draw.h"
 #include "memory.h"
@@ -16,22 +17,27 @@
 #define MEM1_ALIGNMENT 0x40
 
 uint8_t logBuffer[LOG_BUFFER_SIZE] = {0};
+
 bool initialized = false;
 bool isAppRunning = true;
 bool needToDraw = true;
+
+double xOffset = 0.01f;
+double yOffset = 0.01f;
+double zoomLevel = 1.0f;
 
 void initializeScreen() {
     // Grab the buffer size for each screen (TV and gamepad)
     const int sizeOfBuffer0 = OSScreenGetBufferSizeEx(0);
     const int sizeOfBuffer1 = OSScreenGetBufferSizeEx(1);
-    __os_snprintf(logBuffer, LOG_BUFFER_SIZE, "Screen sizes %x, %x\n", sizeOfBuffer0,
-                  sizeOfBuffer1);
+    __os_snprintf(logBuffer, LOG_BUFFER_SIZE, "Screen sizes %x, %x\n",
+                  sizeOfBuffer0, sizeOfBuffer1);
     OSReport(logBuffer);
 
     // Set the buffer area.
     screenBuffer = MEM1_alloc(sizeOfBuffer0 + sizeOfBuffer1, MEM1_ALIGNMENT);
-    __os_snprintf(logBuffer, LOG_BUFFER_SIZE, "Allocated screen buffers at %x\n",
-                  screenBuffer);
+    __os_snprintf(logBuffer, LOG_BUFFER_SIZE,
+                  "Allocated screen buffers at %x\n", screenBuffer);
     OSReport(logBuffer);
 
     OSScreenSetBufferEx(0, screenBuffer);
@@ -101,15 +107,19 @@ static bool AppRunning() {
     return isAppRunning;
 }
 
-void mandelbrot() {
+void drawMandelbrot() {
     const int maximumIterations = 200;
     const uint8_t alpha = 255;
     uint8_t color[3] = {0};
 
     for (int row = 0; row < SCREEN_HEIGHT; ++row) {
         for (int column = 0; column < SCREEN_WIDTH; ++column) {
-            const double cRe = ((column - SCREEN_WIDTH / 2.0f) * 4.0f / SCREEN_WIDTH);
-            const double cIm = ((row - SCREEN_HEIGHT / 2.0f) * 4.0f / SCREEN_WIDTH);
+            const double cRe = ((column - SCREEN_WIDTH / 2.0f) * 4.0f *
+                                zoomLevel / SCREEN_WIDTH) +
+                               xOffset;
+            const double cIm = ((row - SCREEN_HEIGHT / 2.0f) * 4.0f *
+                                zoomLevel / SCREEN_WIDTH) +
+                               yOffset;
 
             double x = 0.0f;
             double y = 0.0f;
@@ -123,7 +133,8 @@ void mandelbrot() {
                 ++iteration;
             }
 
-            const uint8_t colorValue = (iteration >= maximumIterations) ? 0 : 255;
+            const uint8_t colorValue =
+                (iteration >= maximumIterations) ? 0 : 255;
 
             for (int i = 0; i < 3; ++i) {
                 color[i] = colorValue;
@@ -139,13 +150,38 @@ int main(int argc, char** argv) {
     OSScreenInit();
     ProcUIInit(&SaveCallback);
 
+    int vpadError = 0;
+    VPADStatus vpadData;
+
     while (AppRunning()) {
         if (!initialized) {
             continue;
         }
 
+        VPADRead(0, &vpadData, 1, &vpadError);
+
+        if (vpadData.hold & VPAD_BUTTON_RIGHT) {
+            xOffset += 0.1f * zoomLevel;
+            needToDraw = true;
+        }
+
+        if (vpadData.hold & VPAD_BUTTON_LEFT) {
+            xOffset -= 0.1f * zoomLevel;
+            needToDraw = true;
+        }
+
+        if (vpadData.hold & VPAD_BUTTON_UP) {
+            zoomLevel *= 0.90f;
+            needToDraw = true;
+        }
+
+        if (vpadData.hold & VPAD_BUTTON_DOWN) {
+            zoomLevel *= 1.10f;
+            needToDraw = true;
+        }
+
         if (needToDraw) {
-            mandelbrot();
+            drawMandelbrot();
             flipBuffers();
             needToDraw = false;
         }
